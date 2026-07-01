@@ -26,7 +26,7 @@ def run(verbose: bool = True) -> dict:
         od = num(c["on_demand_hr"])
         on_demand_cost = gpu_hours * od
 
-        tier = pricing.recommend_tier(hpd, interruptible)
+        tier = pricing.recommend_tier(hpd, interruptible, gpu_type=gtype, job_days=num(j.get("days", 365)))
         if tier == "spot":
             sim = pricing.spot_checkpoint_cost(gpu_hours, num(c["spot_hr"]), od)
             opt_cost = sim["spot_cost"]

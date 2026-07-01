@@ -60,18 +60,37 @@ def break_even_utilization(discount_frac: float) -> float:
     return max(0.0, min(1.0, 1.0 - discount_frac))
 
 
-def recommend_tier(hours_per_day: float, interruptible: bool, reserved_discount: float = 0.45) -> str:
+def recommend_tier(
+    hours_per_day: float, 
+    interruptible: bool, 
+    reserved_discount: float = 0.45,
+    gpu_type: str = None,
+    job_days: float = None
+) -> str:
     """Pick a purchasing tier from a workload's duty cycle + interruptibility.
-
-    DOCUMENTED simple policy (instructor extension point — swap in your own):
-      - interruptible & not 24/7  -> 'spot'      (checkpoint and ride the discount)
-      - duty cycle >= break-even  -> 'reserved'  (steady, high utilization)
-      - otherwise                 -> 'on_demand' (spiky / low duty)
+    
+    Updated with Extension 1 logic:
+      - Interruption rate check: GPUs like A10G might have high spot interruption, fallback to on-demand/reserved.
+      - 3yr vs 1yr comparison: If job_days is known and < 365, avoid 3yr reserved and evaluate against a 1yr reserved discount (assumed 20%).
     """
     duty = max(0.0, hours_per_day) / 24.0
-    be = break_even_utilization(reserved_discount)
-    if interruptible and hours_per_day < 24:
+    
+    # Check for high interrupt risk
+    interrupt_risk_high = False
+    if gpu_type in ["A10G", "L4"]:
+        interrupt_risk_high = True
+        
+    if interruptible and hours_per_day < 24 and not interrupt_risk_high:
         return "spot"
+        
+    if job_days is not None and job_days < 365:
+        # Evaluate against 1-yr reserved discount (~20%)
+        be_1yr = break_even_utilization(0.20)
+        if duty >= be_1yr:
+            return "reserved"
+        return "on_demand"
+
+    be = break_even_utilization(reserved_discount)
     if duty >= be:
         return "reserved"
     return "on_demand"
@@ -102,3 +121,19 @@ def spot_checkpoint_cost(
         "on_demand_cost": round(on_demand_cost, 2),
         "savings_pct": round(savings_pct, 1),
     }
+
+
+def cache_is_worth_it(
+    avg_cache_reads: float,     # Average re-reads per cached prefix
+    write_cost_per_m: float,    # Cost to write cache per 1M tokens
+    read_cost_per_m: float,     # Base cost to read per 1M tokens
+    read_discount: float = 0.10 # e.g. 0.10 multiplier means 90% discount
+) -> bool:
+    """Caching is only worth it when the total read savings > write cost."""
+    if write_cost_per_m <= 0:
+        return False
+        
+    savings_per_read = read_cost_per_m * (1.0 - read_discount)
+    total_savings = avg_cache_reads * savings_per_read
+    
+    return total_savings > write_cost_per_m

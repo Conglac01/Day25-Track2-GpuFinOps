@@ -26,7 +26,16 @@ def run(verbose: bool = True) -> dict:
         base_cost += pricing.request_cost(inp, out, lin, lout)
         # OPTIMIZED: cascade (route_tier), prompt caching, batch API
         pin, pout = MODEL_PRICES[r["route_tier"]]
-        opt_cost += pricing.request_cost(inp, out, pin, pout, cached_in=cached, batch=is_batch)
+        
+        # Extension 3: Caching economics
+        # Assume caching costs 1.25x base price to write, and avg 15 reads per cache.
+        write_cost = pin * 1.25
+        if pricing.cache_is_worth_it(avg_cache_reads=15, write_cost_per_m=write_cost, read_cost_per_m=pin):
+            actual_cached = cached
+        else:
+            actual_cached = 0
+            
+        opt_cost += pricing.request_cost(inp, out, pin, pout, cached_in=actual_cached, batch=is_batch)
 
     base_pm = pricing.dollars_per_million(base_cost, total_tokens)
     opt_pm = pricing.dollars_per_million(opt_cost, total_tokens)
